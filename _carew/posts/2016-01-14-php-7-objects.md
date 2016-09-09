@@ -48,7 +48,7 @@ Now, let's define an object, *zend_object* :
 		zval              properties_table[1]; /* C struct hack */
 	};
 
-As we can see, it is a little bit different from PHP 5. it embeds a *zend_refcounted_h* header, which is part of the new zval and garbage collection mechanisms of PHP 7.
+As we can see, it is a little bit different from PHP 5. It embeds a *zend_refcounted_h* header, which is part of the new zval and garbage collection mechanisms of PHP 7.
 Also, what's different from PHP 5 is that now the object embeds its *handle*, whereas on PHP 5, this responsibility was delegated to the *zend_object_store*. We'll see that now in PHP 7, the object store has much less responsibilities.
 Also, you may have caught the C struct hack used to inline the zval vector *properties_table*, we'll have to take care of it when we'll create custom object.
 
@@ -74,7 +74,7 @@ Using C struct inheritence, a simple cast is enough to make it :
 	my_obj = (my_own_object *)zend_objects_store_get_object(this_zval);
 	zobj   = (zend_object *)my_obj;
 
-You may notice that in PHP 5, when you receive a zval, like $this in OO methods, you can't from this zval access the object it points to directly.
+You may notice that in PHP 5, when you receive a zval, like `$this` in OO methods, you can't from this zval access the object it points to directly.
 You need to ask the object store. You extract the handle from the zval (in PHP 5), and with this handle you ask the store to give you back the object it found. This object - as it may be a custom one - is returned as a *void\** you must cast it as *zend_object\**, if you didnt customize anything, or as *my_own_object\** if you did.
 
 So in PHP 5, to retrieve an object from a method, you need a lookup. This is not nice in term of performances.
@@ -117,7 +117,7 @@ So now to fetch your custom object in PHP 7, you'd do it like this :
 
 Using `offsetof()` here has one implication : **the zend_object must be the last member of your_custom_struct object**. Obviously if you declare types after it, you'll run into trouble accessing them, because of the way *zend_object* is allocated now in PHP 7.
 
-Remember that now in PHP 7, *zend_object* has a struct hack. That means that the allocated memory will differ from `sizeof(zend_object)`.
+Remember that now in PHP 7, *zend_object* has a struct hack. That means that the allocated memory quantity will differ from `sizeof(zend_object)`.
 To allocate a *zend_object*, one would use :
 
 	/* PHP 5 */
@@ -148,7 +148,7 @@ Here is what its `create_object()` handler could look like :
 	{
 		my_own_object *my_obj;
 
-		my_obj                   = ecalloc(1, sizeof(my_obj) + zend_object_properties_size(ce));
+		my_obj                   = ecalloc(1, sizeof(*my_obj) + zend_object_properties_size(ce));
 		my_obj->my_custom_buffer = emalloc(512); /* for example, our custom buffer will fit 512 bytes */
 
 		zend_object_std_init(&my_obj->zobj, ce); /* take care of the zend_object also ! */
@@ -193,7 +193,7 @@ You see here, that we declare the `free_obj()` and the `dtor_obj()` handlers in 
 
 So we register our `dtor_obj()` and `free_obj()` handlers here, as well as an offset member, which represents the offset we used to compute our custom object placement in memory.
 **This information is needed by the engine**. Why ? Well, simply because in PHP 7, **this is the engine that frees the object, not you any more**.
-We'll see that later, but when it comes to free the object, back in PHP 5 you had to do it yourself (often with a simple *free()*), now in PHP 7, the engine does it ; but as the engine will only receive *zend_object* types (obviously), it will have to know the offset in your custom struct, to free the whole pointer. This is [done here](http://lxr.php.net/xref/PHP_7_0/Zend/zend_objects_API.c#189).
+We'll see that later, but when it comes to free the object, back in PHP 5 you had to do it yourself (often with a simple *free()*), now in PHP 7, the engine does it ; but as the engine will only receive *zend_object* types (obviously), it will have to know the offset in your custom struct, to free the whole pointer. This is [done here](https://github.com/php/php-src/blob/PHP-7.0/Zend/zend_objects_API.c#L187).
 
 ## Object destruction
 
@@ -207,8 +207,6 @@ So to sum up things about destructors :
 	* The destructor is called exactly zero **or** one time (most likely), but never more than once. In case of fatal errors, it **won't** be called at all.
 	* The destructor shouldn't free resources, as the object **could** be reused by the engine in some special rare cases.
 	* If you don't call `zend_objects_destroy_object()` from your custom destructor, userland's `__destruct()` won't be triggered.
-
-.
 
 	/* PHP 7 */
 	static void my_destroy_object(zend_object *object)
@@ -241,10 +239,10 @@ Finally, the free storage function is triggered when the engine is extra sure th
 
 And that's all. What changes here, is that you don't free the object yourself anymore, like it was the case in PHP 5. In PHP 5, the handler would end with something like *free(object)*. You never do that in PHP 7.
 In your `create_object()` handler, you allocated some space for your custom object structure, but as you passed the offset of your custom data to the engine in your MINIT, it is now able itself to free it.
-It does that exactly [here](http://lxr.php.net/xref/PHP_7_0/Zend/zend_objects_API.c#189).
+It does that exactly [here](https://github.com/php/php-src/blob/PHP-7.0/Zend/zend_objects_API.c#L187).
 
 Of course, in many cases, the `free_obj()` handler is called immediately after the `dtor_obj()` handler. Only if the userland destructor passes $this to someone else, then it won't be the case (or in the case of a custom extension object which is badly designed or hackish).
-Read [zend_object_store_del()](http://lxr.php.net/xref/PHP_7_0/Zend/zend_objects_API.c#147) for the full sequence of code run when the engine wants to release an object.
+Read [zend_object_store_del()](https://github.com/php/php-src/blob/PHP-7.0/Zend/zend_objects_API.c#L143) for the full sequence of code run when the engine wants to release an object.
 
 ## Conclusion
 

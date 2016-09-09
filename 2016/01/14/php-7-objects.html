@@ -83,7 +83,7 @@ struct _zend_object {
     HashTable        *properties;
     zval              properties_table[1]; /* C struct hack */
 };</code></pre>
-<p>As we can see, it is a little bit different from PHP 5. it embeds a <em>zend_refcounted_h</em> header, which is part of the new zval and garbage collection mechanisms of PHP 7.
+<p>As we can see, it is a little bit different from PHP 5. It embeds a <em>zend_refcounted_h</em> header, which is part of the new zval and garbage collection mechanisms of PHP 7.
 Also, what's different from PHP 5 is that now the object embeds its <em>handle</em>, whereas on PHP 5, this responsibility was delegated to the <em>zend_object_store</em>. We'll see that now in PHP 7, the object store has much less responsibilities.
 Also, you may have caught the C struct hack used to inline the zval vector <em>properties_table</em>, we'll have to take care of it when we'll create custom object.</p>
 <h2 id="custom-objects-management">Custom objects management<a href="#custom-objects-management" class="anchor">#</a></h2>
@@ -102,7 +102,7 @@ zend_object   *zobj;
 
 my_obj = (my_own_object *)zend_objects_store_get_object(this_zval);
 zobj   = (zend_object *)my_obj;</code></pre>
-<p>You may notice that in PHP 5, when you receive a zval, like $this in OO methods, you can't from this zval access the object it points to directly.
+<p>You may notice that in PHP 5, when you receive a zval, like <code>$this</code> in OO methods, you can't from this zval access the object it points to directly.
 You need to ask the object store. You extract the handle from the zval (in PHP 5), and with this handle you ask the store to give you back the object it found. This object - as it may be a custom one - is returned as a <em>void*</em> you must cast it as <em>zend_object*</em>, if you didnt customize anything, or as <em>my_own_object*</em> if you did.</p>
 <p>So in PHP 5, to retrieve an object from a method, you need a lookup. This is not nice in term of performances.</p>
 <p>In PHP 7, this is different.
@@ -131,7 +131,7 @@ my_own_object *my_obj;
 zobj   = Z_OBJ_P(this_zval);
 my_obj = (my_own_object *)((char *)zobj - XoffsetOf(struct my_own_object, zobj));</code></pre>
 <p>Using <code>offsetof()</code> here has one implication : <strong>the zend_object must be the last member of your_custom_struct object</strong>. Obviously if you declare types after it, you'll run into trouble accessing them, because of the way <em>zend_object</em> is allocated now in PHP 7.</p>
-<p>Remember that now in PHP 7, <em>zend_object</em> has a struct hack. That means that the allocated memory will differ from <code>sizeof(zend_object)</code>.
+<p>Remember that now in PHP 7, <em>zend_object</em> has a struct hack. That means that the allocated memory quantity will differ from <code>sizeof(zend_object)</code>.
 To allocate a <em>zend_object</em>, one would use :</p>
 <pre><code>/* PHP 5 */
 zend_object *zobj;
@@ -155,7 +155,7 @@ static zend_object *my_create_object(zend_class_entry *ce)
 {
     my_own_object *my_obj;
 
-    my_obj                   = ecalloc(1, sizeof(my_obj) + zend_object_properties_size(ce));
+    my_obj                   = ecalloc(1, sizeof(*my_obj) + zend_object_properties_size(ce));
     my_obj->my_custom_buffer = emalloc(512); /* for example, our custom buffer will fit 512 bytes */
 
     zend_object_std_init(&my_obj->zobj, ce); /* take care of the zend_object also ! */
@@ -194,7 +194,7 @@ PHP_MINIT_FUNCTION(my_extension)
 <p>You see here, that we declare the <code>free_obj()</code> and the <code>dtor_obj()</code> handlers in MINIT. Before, in PHP 5, we had to declare both of them to <code>zend_objects_store_put()</code>, when registering the object into the store, <strong>operation which is not needed anymore in PHP 7</strong>. In PHP 7, <code>zend_object_std_init()</code> will write the object into the store, you don't do that by hand anymore, so don't miss that call.</p>
 <p>So we register our <code>dtor_obj()</code> and <code>free_obj()</code> handlers here, as well as an offset member, which represents the offset we used to compute our custom object placement in memory.
 <strong>This information is needed by the engine</strong>. Why ? Well, simply because in PHP 7, <strong>this is the engine that frees the object, not you any more</strong>.
-We'll see that later, but when it comes to free the object, back in PHP 5 you had to do it yourself (often with a simple <em>free()</em>), now in PHP 7, the engine does it ; but as the engine will only receive <em>zend_object</em> types (obviously), it will have to know the offset in your custom struct, to free the whole pointer. This is <a href="http://lxr.php.net/xref/PHP_7_0/Zend/zend_objects_API.c#189">done here</a>.</p>
+We'll see that later, but when it comes to free the object, back in PHP 5 you had to do it yourself (often with a simple <em>free()</em>), now in PHP 7, the engine does it ; but as the engine will only receive <em>zend_object</em> types (obviously), it will have to know the offset in your custom struct, to free the whole pointer. This is <a href="https://github.com/php/php-src/blob/PHP-7.0/Zend/zend_objects_API.c#L187">done here</a>.</p>
 <h2 id="object-destruction">Object destruction<a href="#object-destruction" class="anchor">#</a></h2>
 <p>Let's now focus on the destructor.</p>
 <p>I remind you that the destructor is called when the object is destroyed from PHP userland, exactly the same way user land's <code>__destruct()</code> is called.
@@ -203,21 +203,21 @@ Also, if you read carefully the articles I point you to or <a href="http://fr.sl
 <p>So to sum up things about destructors :</p>
 <ul><li>The destructor is called exactly zero <strong>or</strong> one time (most likely), but never more than once. In case of fatal errors, it <strong>won't</strong> be called at all.</li>
 <li>The destructor shouldn't free resources, as the object <strong>could</strong> be reused by the engine in some special rare cases.</li>
-<li>If you don't call <code>zend_objects_destroy_object()</code> from your custom destructor, userland's <code>__destruct()</code> won't be triggered.</li>
-</ul><p>.</p>
-<pre><code>/* PHP 7 */
-static void my_destroy_object(zend_object *object)
+<li>
+<p>If you don't call <code>zend_objects_destroy_object()</code> from your custom destructor, userland's <code>__destruct()</code> won't be triggered.</p>
+<p>/<em> PHP 7 </em>/
+static void my_destroy_object(zend_object <em>object)
 {
-    my_own_object *my_obj;
+my_own_object </em>my_obj;</p>
+<pre><code>my_obj = (my_own_object *)((char *)object - XoffsetOf(my_own_object, zobj));
 
-    my_obj = (my_own_object *)((char *)object - XoffsetOf(my_own_object, zobj));
+/* Now we could do something with my_obj->my_custom_buffer, like sending it
+   on a socket, or flush it to a file, or whatever, but not free it here */
 
-    /* Now we could do something with my_obj->my_custom_buffer, like sending it
-       on a socket, or flush it to a file, or whatever, but not free it here */
-
-    zend_objects_destroy_object(object); /* call __destruct() from userland */
-}</code></pre>
-<h2 id="object-storage-free">Object storage free<a href="#object-storage-free" class="anchor">#</a></h2>
+zend_objects_destroy_object(object); /* call __destruct() from userland */</code></pre>
+<p>}</p>
+</li>
+</ul><h2 id="object-storage-free">Object storage free<a href="#object-storage-free" class="anchor">#</a></h2>
 <p>Finally, the free storage function is triggered when the engine is extra sure the object is not used elsewhere. The engine <strong>is</strong> about to destroy it, but just before doing so, it calls your <code>free_obj()</code> handler. You allocated some resources in your custom <code>create_object()</code> handler ? It is now time to free them :</p>
 <pre><code>/* PHP 7 */
 static void my_free_object(zend_object *object)
@@ -232,9 +232,9 @@ static void my_free_object(zend_object *object)
 }</code></pre>
 <p>And that's all. What changes here, is that you don't free the object yourself anymore, like it was the case in PHP 5. In PHP 5, the handler would end with something like <em>free(object)</em>. You never do that in PHP 7.
 In your <code>create_object()</code> handler, you allocated some space for your custom object structure, but as you passed the offset of your custom data to the engine in your MINIT, it is now able itself to free it.
-It does that exactly <a href="http://lxr.php.net/xref/PHP_7_0/Zend/zend_objects_API.c#189">here</a>.</p>
+It does that exactly <a href="https://github.com/php/php-src/blob/PHP-7.0/Zend/zend_objects_API.c#L187">here</a>.</p>
 <p>Of course, in many cases, the <code>free_obj()</code> handler is called immediately after the <code>dtor_obj()</code> handler. Only if the userland destructor passes $this to someone else, then it won't be the case (or in the case of a custom extension object which is badly designed or hackish).
-Read <a href="http://lxr.php.net/xref/PHP_7_0/Zend/zend_objects_API.c#147">zend_object_store_del()</a> for the full sequence of code run when the engine wants to release an object.</p>
+Read <a href="https://github.com/php/php-src/blob/PHP-7.0/Zend/zend_objects_API.c#L143">zend_object_store_del()</a> for the full sequence of code run when the engine wants to release an object.</p>
 <h2 id="conclusion">Conclusion<a href="#conclusion" class="anchor">#</a></h2>
 <p>We've seen how objects have changed in PHP 7 compared to PHP 5, from an internal point of view. In userland, nothing has changed : all works similar to PHP 5, simply the PHP 7 object model is more optimized, so faster, and has some little more features compared to PHP 5, but nothing big here.</p>
 <p>Internally, there are some changes. They are not huge, they won't require you hours of work, but they will generate some work. Both object models are incompatible internally, that means that you must rewrite your extension source code about objects, a little bit.
