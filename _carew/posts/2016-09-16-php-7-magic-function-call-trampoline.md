@@ -20,7 +20,7 @@ So, let's start by a quick and simple example :
 		if ($n == 1) {
 			return $n;
 		}
-		return $n * fact($n-1);
+		return $n * factorial($n-1);
 	}
 	
 Yeah, everyone knows about this function. The factorial function is the easiest one to understand recursion. It got very few instructions, and above all : it calls itself.
