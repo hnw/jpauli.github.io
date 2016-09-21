@@ -5,10 +5,12 @@ title:  PHP 7 Arrays : HashTables
 
 ## Introduction
 
-HashTables are used everywhere, in every C strong program. Basically, they allow the programmer to store values into an "array" by indexing this latter using strings, whereas the C language only allow integers as C-array keys. A hashtable structure is then built, the string key is hashed and reduced to the hashtable size space. Collisions may then happen, thus a collision resolution algorithm must be used. Several of them exist, PHP chose the linked list strategy.
+HashTables are used everywhere, in every C strong program. Basically, they allow the programmer to store values into an "array" by indexing this latter using strings, whereas the C language only allow integers as C-array keys. A hashtable structure is then built, the string key is hashed and reduced to the hashtable size space. Collisions may then happen, thus a collision resolution algorithm must be used. Several of them exist, PHP chose the linked-list strategy.
 
-If you want to know more about hashtables and their different implementations, you can find great articles about them on the Web. [http://preshing.com/](http://preshing.com/) is a good start, with lots of detailed articles. Be warned however, there exists tons of ways to design hashtables, none is perfect, all those strategies are tradeoff : wether they optimize CPU cycles, memory footprint, or they scale well in threaded environment... Some are better at insertion, others at finding and probing etc...
+If you want to know more about hashtables and their different implementations, you can find great articles about them on the Web as they are a very commonly used structure. [http://preshing.com/](http://preshing.com/) is a good start, with lots of detailed articles. Be warned however, there exists tons of ways to design hashtables, none is perfect, all those strategies are tradeoff : wether they optimize CPU cycles, memory footprint, or they scale well in threaded environment... Some are better at insertion, others at finding and probing etc...
 Depending on the factor you want to push, you'll end up with very different HashTables implementations.
+
+> There exists many ways to design HashTables, depending on what factor you want to promote.
 
 PHP 5 Hashtables are detailed in [phpinteralsbook](http://www.phpinternalsbook.com/hashtables/basic_structure.html) I wrote together with [Nikic](http://nikic.github.io), who himself [wrote a nice PHP 7 HashTable article](http://nikic.github.io/2014/12/22/PHPs-new-hashtable-implementation.html) you may find interesting (dating from before PHP 7 release, some little things changed).
 
@@ -19,7 +21,7 @@ Remember that into PHP 7 source code, we use hashtables everywhere (mainly as di
 
 Here are some statements, we'll detail them through the article :
 
-*	The key may be an integer or a string. If a string is used, a `zend_string` structure is used, for ints : a `zend_ulong`
+*	The key may be an integer or a string. If a string is used, a `zend_string` structure is used, for ints : a `zend_ulong` (which in a platform unsigned extended long).
 *	The hashtable must always remember the order the elements are inserted.
 *	The hashtable is auto-resizable, that is it auto-grows when needed and can shrink under some circumstances.
 *	Internally, the table size is always a power of two, for performance point and memory alignment purpose.
@@ -71,9 +73,9 @@ We see there that the data inserted into the hashtable is stored in a contiguous
 
 ### Adding elements while keeping the order of things
 
-PHP must keep the order data are inserted into an array. When you foreach an array, you get back data in the exact same order you inserted them  in the array. Whatever their key :
+PHP must keep the order data are inserted into an array. When you `foreach()` an array in PHP, you get back data in the exact same order you inserted them  in the array. Whatever their key :
 
-	$a = [9=>"foo", 2 => 42, []];
+	$a = [9 => "foo", 2 => 42, []];
 	var_dump($a);
 	
 	array(3) {
@@ -87,13 +89,13 @@ PHP must keep the order data are inserted into an array. When you foreach an arr
 	}
 
 This fact is important, and it has pushed some constraints into how hashtables are implemented.
-All the data are contiguous in memory, they are stored in `zval`s themselves packed into `Buckets` allocated as the `arData` C-array field. Something like that :
+All the data are contiguous in memory, they are stored in `zval`s themselves packed into `Bucket`s allocated as the `arData` C-array field. Something like that :
 
-	$a = [3=> 'foo', 8 => 'bar', 'baz' => []];
+	$a = [3 => 'foo', 8 => 'bar', 'baz' => []];
 
 ![simple_hash_data](../../../img/php7-hashtables/simple_hash_data_1.png)
 
-Thus iterating over the hashtable is really easy, one must simply iterate over the `arData` C array, this is a contiguous memory scanning, which is very fast and very CPU cache friendly (the CPU cache line 1 may have loaded the full arData, accessing each cell in about one nanosecond. Note that `arData` is 64bits aligned to maximize CPU cache transfer and storage (as well as optimizing alignement over 64bit workload full instructions).
+Thus iterating over the hashtable is really easy, one must simply iterate over the `arData` C array, this is a contiguous memory scanning, which is very fast and very CPU cache friendly as the CPU cache line 1 may have loaded the full `arData`, accessing each cell in about one nanosecond. Note that `arData` is 64bits aligned to maximize CPU cache transfer and storage (as well as optimizing alignement over 64bit workload full instructions).
 Some code to iterate over the hashtable could look like this :
 
 	size_t i;
@@ -108,7 +110,7 @@ Some code to iterate over the hashtable could look like this :
 
 Like you can see, things are ordered and pushed into the next slot of `arData`. To accomplish that, we simply keep in memory the next available slot into `arData`. It is kept in the `nNumUsed` field.
 
-Everytime a new value is added, we store it at *ht->nNumUsed++*. When `nNumUsed` reaches the number of elements in the hashtable (`nNumOfElements`), we launch a "compact or grow" algorithm that is detailed later.
+Everytime a new value is added, we store it at *ht->nNumUsed++* (notice the incrementation). When `nNumUsed` reaches the number of elements in the hashtable (`nNumOfElements`), we launch a "compact or grow" algorithm that is detailed later.
 
 This is a simplified view of how elements are added to the hashtable, assuming a string key has been used :
 
@@ -121,6 +123,8 @@ This is a simplified view of how elements are added to the hashtable, assuming a
 	p->h = h = ZSTR_H(key); /* save the hash of the current key into the bucket */
 	ZVAL_COPY_VALUE(&p->val, pData); /* Copy the value into the bucket's value : add operation */
 
+So elements are added at the end of the `arData`. They are pushed, and middle "holes" (empty deleted slots) are not filled back. We'll detail that.
+
 ### Deleting values
 
 When a value is deleted, the `arData` C array is not narrowed nor are the data rearranged into it.
@@ -131,7 +135,7 @@ Something like that :
 
 ![hash_deletion](../../../img/php7-hashtables/hash_deletion_undef.png)
 
-Hence, the iteration code must be reworked a little bit to take care of such "empty" holes :
+Hence, the iteration code must be reworked a little bit to take care of such possible "empty" holes :
 
 	size_t i;
 	Bucket p;
@@ -140,17 +144,18 @@ Hence, the iteration code must be reworked a little bit to take care of such "em
 	for (i=0; i < ht->nTableSize; i++) {
 		p   = ht->arData[i];
 		val = p.val;
-		if (Z_TYPE(val) == IS_UNDEF) {
-			continue;
+		if (Z_TYPE(val) == IS_UNDEF) { /* empty hole ? */
+			continue; /* skip it */
 		}
 		/* do something with val */
 	}
 
 We will see what happens when the hashtable must be resized, and how the `arData` C array may be reorganized to make "holes" dissapear (compaction).
+Even with a very huge hashtable, iterating over it and skipping all possible deleted values (holes) is very fast because of the continuous piece of memory that represents the `arData` field scanning.
 
-### Hashing keys
+### Hashing string-based keys
 
-When we have a key, we must hash it and reduce it, then make a translation from the hashed-reduced value, and the index into `arData`.
+When we have a string-based key, we must hash it and reduce it, then make a translation from the hashed-reduced value, and the index into `arData`.
 Even if the key is integer based, it will get reduced as well to fit the `arData` bounds.
 
 Remember that we cant use the reduced value as-is to index directly the `arData` C array, because if we do so, that means that the keys used to index the `arData` are directly bound to the keys obtained from the hash, and that will break one feature of PHP hashtables : keep the order of things into the hashtable.
@@ -170,9 +175,9 @@ The layout looks like this, for an 8-element hashtable (the minimum hashtable si
 
 Now, when you come with the key "foo", this one is hashed through the DJB33X hash, and reduced using a modulo to the `arData` array size (`nTableMask`), so that the key now gives an index that can be used to probe the `arData` **translation slots** (not the direct slots like we said !).
 
-Like you can see, those slots are accessed using a negative offset from arData starting point. The two memory areas have been joined, so that we keep our workload into a contiguous space in memory.
+Like you can see, those slots are accessed using a negative offset from `arData` starting point, just some C pointer maths are involved, and we keep our full workload into a contiguous space in memory.
 The `nTableMask` is equal to minus the table size, thus when we modulo with it, we get a number from 0 to -7, and can probe our memory zone.
-When we allocate the full `arData` buffer, we compute its size so that it is set of tablesize \* sizeof(bucket) PLUS tablesize \* sizeof(uint32) translations slots.
+When we allocate the full `arData` buffer, we compute its size so that it is set of *tablesize \* sizeof(bucket)* **+** *tablesize \* sizeof(uint32)* translations slots.
 
 This buffer division in two distinct areas is clearly visible in source :
 
@@ -192,16 +197,20 @@ Pretty nice.
 
 ### Collisions resolution
 
-Let's see how collision are resolved. Remember that in a hashtable, several keys, when hashed and reduced, may lead to the same translation index.
-So what we do when we got a translation index, is that we use it to fetch back the data from `arData` and we check this data is effectively the one we want by comparing the hashes and the keys. If the data is not the right one, we get through a linked list by using the `zval.u2.next` field , which indicates the next data slot to probe, etc...
+Let's see how collisions are resolved. Remember that in a hashtable, several keys - when hashed and reduced - may lead to the same translation index (infinite place from, finite place to).
+So what we do when we got a translation index, is that we use it to fetch back the data from `arData` (using translation slots) and we check this data is effectively the one we want by comparing the hashes and the keys. If the data is not the right one, we get through a linked list by using the `zval.u2.next` field , which indicates the next data slot to probe, etc...
 
 Notice how the linked list is not sparsed in memory, like traditionnal linked lists are.
-Instead of browsing several allocated pointers obtained from the heap - and thus very likely to be sparsed in memory address range - we keep reading the full arData vector from memory ; **this is a crucial point behind performance improvement in PHP 7 hashtable implementation, and in overall PHP 7 performances**.
+Instead of browsing several allocated pointers obtained from the heap - and thus very likely to be sparsed in memory address range - we keep reading the full `arData` vector from memory.
 
-> PHP 7 hashtable have a very strong data locality, many accesses in there are done in about 1 nanosecond, as they very likely fit entirely into the L1 cache of your CPU.
+> This is a crucial point behind performance improvement in PHP 7 hashtable implementation, and in overall PHP 7 performances. Data locality has been hardly worked to reach that goal : do not make the CPU access main memory (slow operation) so often (compared to PHP 5, f.e). PHP 7 hashtable have a very strong data locality, many accesses are fetched from L1 CPU cache (about 1 nanosecond access time), as they very likely fit entirely into the L1 cache of your CPU.
 
 So now, let's see how we add an element to the hash, including managing the hash collisions :
 
+	#define HT_HASH_EX(data, idx) ((uint32_t*)(data))[(int32_t)(idx)]
+	#define HT_HASH(ht, idx) HT_HASH_EX((ht)->arData, idx)
+	#define HT_IDX_TO_HASH(idx) (idx)
+	
 	idx = ht->nNumUsed++; /* take the next avalaible slot number */
 	ht->nNumOfElements++; /* increment number of elements */
 	/* ... */
@@ -217,6 +226,10 @@ So now, let's see how we add an element to the hash, including managing the hash
 
 The same rules applies to deletion :
 
+
+	#define HT_HASH_TO_BUCKET_EX(data, idx) ((data) + (idx))
+	#define HT_HASH_TO_BUCKET(ht, idx) HT_HASH_TO_BUCKET_EX((ht)->arData, idx)
+	
 	h = zend_string_hash_val(key); /* get the hash from the key (assuming string key here) */
 	nIndex = h | ht->nTableMask; /* get the translation table index */
 
@@ -265,26 +278,33 @@ Note that there is no need to use the heap. A static const memory zone is just e
 
 Then, when the first item is inserted, we fully initialize the hashtable, aka we create the last needed translation slots depending on the size asked (it starts at 8 slots if no clue given). This allocation is done from the heap as some dynamism is showing up.
 
+	#define HT_HASH_EX(data, idx) ((uint32_t*)(data))[(int32_t)(idx)]
+	#define HT_HASH(ht, idx) HT_HASH_EX((ht)->arData, idx)
+	
 	(ht)->nTableMask = -(ht)->nTableSize;
 	HT_SET_DATA_ADDR(ht, pemalloc(HT_SIZE(ht), (ht)->u.flags & HASH_FLAG_PERSISTENT));
 	memset(&HT_HASH(ht, (ht)->nTableMask), HT_INVALID_IDX, HT_HASH_SIZE((ht)->nTableMask))
 
 The `HT_HASH` macro allows to access the translation slots in the negative offset part of the allocated buffer.
 The table mask is always negative, because the translation table slots are indexed negatively from the start of the `arData` buffer.
-This is true C programming is all its beauty : you are given billions of memory slots : swim in that infinite pool but don't sink.
+This is true C programming is all its beauty : you are given billions of memory slots : swim in that infinite pool but don't sink and take care of performances in each memory access !
 
-Here is a hashtable lazy-initialized : It has been created, but nothing hash never been inserted into it yet :
+Here is a hashtable lazy-initialized : It has been created, but nothing has never been inserted into it yet :
 
 ![hash_lazy_init](../../../img/php7-hashtables/hash_lazy_init.png)
+
+Pretty light isn't it ?
 
 ### Hash fragmentation, resizing and compacting
 
 When the hashtable becomes full, and one will keep-on inserting items, then the hash must resize itself (on more advantage of hashtables against classical C bound-arrays).
-The hashtable size is then doubled everytime it is asked to grow. Here again, when we double the size of the hashtable, we pre-allocate the `arBucket` C array and store into the empty slots special UNDEF values. We then effectively waste space here : *(new_size - old_size) \* sizeof(Bucket)* bytes are actually lost, waiting for data to be inserted and take the UNDEF slots.
+The hashtable size is then doubled everytime it is asked to grow. Here again, when we double the size of the hashtable, we pre-allocate the `arBucket` C array and store into the empty slots special UNDEF `zval` values. We then effectively waste space here : *(new_size - old_size) \* sizeof(Bucket)* bytes are actually lost, waiting for data to be inserted and take the UNDEF slots.
 
-Hence if you have a 1024 slots hashtable, and add one more item, the table is going to grow to 2048 slots, having 1023 of them empty, consuming 1023 * 32 bytes = roughly 32Kb here. This is one tradeoff, one drawback of PHP's hashtable implementation.
+Hence if you have a 1024 slots hashtable, and add one more item, the table is going to grow to 2048 slots, having 1023 of them empty, consuming 1023 * 32 bytes = roughly 32Kb here. This is one drawback of PHP's hashtable implementation, which anyway can't be perfect.
 
-Remember however that the hashtable could be full of UNDEF slots. If one adds many items, then removes many of them, the hashtable will get fragmented. As we never insert something new in such a hole, but at the end of the `arData` (to keep order of things), we could run in a scenario where we are at the edge of the end, but still could see may empty UNDEF slots in the `arData`.
+> Programming is always solving compromises, in case of low level programming, this is a CPU versus memory compromise.
+
+Remember however that the hashtable could be full of UNDEF slots. If one adds many items, then removes many of them, the hashtable will get fragmented. As we never insert something new in such a hole, but at the end of the `arData` (to keep order of things while iterating), we could run in a scenario where we are at the edge of the end, but still could see may empty UNDEF slots in the `arData`.
 
 Here is a picture of a very fragmented 8-slots hashtable :
 
@@ -293,13 +313,13 @@ Here is a picture of a very fragmented 8-slots hashtable :
 Remember we can't store new values in UNDEF holes, as when we iterate over the hashtable, we start from `arData[0]` to `arData[7]` in such an above example (assuming 8-slots hashtable).
 
 Resizing is one occasion to shrink the `arData` vector and finally fill-in those empty slots by simply reorganizing the data.
-When the hashtable is asked to gets resized, it first tries to compact itself. It then computes if after compaction it effectively needs to get grown, and grows if needed, doubling its size (the `arData` vector is then `realloc()`ed as twice its old size). If not needed, data have simply been reorganized into already-allocated slots, an algorithm we can't run at every deletion of items as it would burn CPU cycles too often for not a huge gain (you remember, that famous CPU/Memory tradeoff in programming ?)
+When the hashtable is asked to get resized, it first tries to compact itself. It then computes if after compaction it effectively needs to grow, and grows if needed, doubling its size (the `arData` vector is then `realloc()`ed as twice its old size). If not needed, data have simply been reorganized into already-allocated slots, an algorithm we can't run at every deletion of items as it would burn CPU cycles too often for not a huge gain (you remember, that famous CPU/Memory compromise in programming ?)
 
 This is a picture of the preceding fragmented hashtable, once it got compacted :
 
 ![hash_compacted](../../../img/php7-hashtables/hash_compacted.png)
 
-The algorithm must browse the `arData` and for every UNDEF slot, fill-in by the next slot not UNDEF.
+The algorithm must browse the `arData` and replace every UNDEF slot by the next defined value.
 Here it is , simplified : 
 	
 	Bucket *p;
@@ -342,38 +362,39 @@ Here it is , simplified :
 So far so good, we know the basics of PHP 7 hashtable implementation.
 Let's have a look at its public API.
 
-There is nothing special to say (ah : it is way better designed as PHP 5's); just keep in mind there are three factors to take into account about what API function to use :
+There is nothing special to say except that it is **way better designed** as PHP 5's; Just keep in mind there are three factors to take into account about what API function to use :
 
 *	Your operation (add, remove, clean, destroy etc...)
 *	The type of your key (integer, or string)
 *	The type of data you want to store
 
 Remember that wether your key is a string, or an integer ; is a very important factor hashtable API must know as string based keys will need to take the hash from the `zend_string` and integer based key will directly be used as hash.
-Thus, we can meet `zend_hash_add(ht, zend_string, data)` or `zend_hash_index_add(ht, long, data)`.
+Thus, we can meet `zend_hash_add(ht, zend_string, data)` or `zend_hash_index_add(ht, zend_ulong, data)`.
 
-Sometimes, your key will be a simple (char\* / int) pair. Here, you'll use a different API, f.e `zend_hash_str_add(ht, char *, int, data)`.
-But keep in mind that whatever happens, the hashtable will deal with a `zend_string`, and will then turn your C string into a `zend_string`, computing its hash which could waste CPU cycles. If you can use `zend_string`, use it; as they are very likely to have already computed their own hash, hence the hashtable API will simply use it. For example, the PHP compiler computes every hash of every piece of string it uses, as `zend_string` of course. OPCache also stores such a hash in shared memory. As extension writer : initialize all your `zend_string` litterals in MINIT.
+Sometimes, your key will be a simple classical *(char\* / size_t)* pair. Here, you'll use a different API, f.e `zend_hash_str_add(ht, char *, size_t, data)`.
+But keep in mind that whatever happens, the hashtable will deal with a `zend_string`, and will then turn your C string into a `zend_string`, duplicating it in memory and computing its hash. That could waste CPU cycles if the string were to be already known. If you can use a `zend_string`, use it; as they are very likely to have already computed their own hash, hence the hashtable API will simply use it. For example, the PHP compiler computes every hash of every piece of string it uses, as `zend_string` of course. OPCache also stores such a hash in shared memory. As extension writer : initialize all your `zend_string` litterals in MINIT.
 
 Finally comes the data you want to store into hashtables. Here again, whatever you use : the hashtable will put it into a `zval`, stored into each `Bucket`. But zvals are really flexible in PHP 7, and can store any type of data.
-The hashtable API mainly expect you to pack your data into a zval, that is it expects a zval as value. It may however ease things if you got a pointer to store, or a memory area (some data pointed by a pointer).
-It will then take your pointer or memory area, and build a zval with it, then use that zval as data.
+The hashtable API mainly expect you to pack your data into a zval, that is it expects a `zval` as value. It may however ease things if you got a pointer to store, or a memory area.
+It will then take your pointer or memory area, and build a `zval` with it, then use that `zval` as data.
 
 Examples are now easy to understand :
 
-	zend_hash_str_add_mem(hashtable *, char *, size_t, void *)
+	zend_hash_str_add_mem(hashtable *, char *, size_t, void *, size_t)
 	zend_hash_index_del(hashtable *, zend_ulong)
 	zend_hash_update_ptr(hashtable *, zend_string *, void *)
 	zend_hash_index_add_empty_element(hashtable *, zend_ulong)
 
-Retrieving data, you'll be given a zval *, or NULL. There is a special case for a pointer based value where the API can return it as-is :
+Retrieving data, you'll be given a `zval *`, or NULL. There is a special case for a pointer based value where the API can return it as-is :
 
-	zend_hash_index_find(hashtable *, zend_string *) : zval *
+	zend_hash_find(hashtable *, zend_string *) : zval *
 	zend_hash_find_ptr(hashtable *, zend_string *) : void *
 	zend_hash_index_find(hashtable *, zend_ulong) : zval *
+	zend_hash_index_find_ptr(hashtable *, zend_ulong) : void *
 
-About the "_new" API, like `zend_hash_add_new()` : you should not use it. This is used internally by the engine. This API forces the hashtable to store the data, even if that latter is already available into the hash (same key). You'll end up having doubles, and strange thing could then show up. It may be used if you are very sure the data you're going to add is not already present : that will prevent a search for it.
+About the "_new" API, like `zend_hash_add_new()` : you should not use it. This is used internally by the engine. This API forces the hashtable to store the data, even if that latter is already available into the hash (same key). You'll end up having doubles, and strange things could then show up. It may be used if you are very sure the data you're going to add is not already present : that will prevent a search for it. Analyze the source for more informations.
 
-Last word : like in PHP 5, the `zend_symtable_api()` API takes care of numeric-like strings to turn them to integers :
+Last word : like in PHP 5, the `zend_symtable_xxx()` API takes care of numeric-like strings to turn them to integers :
 
 	static zend_always_inline zval *zend_symtable_update(HashTable *ht, zend_string *key, zval *pData)
 	{
@@ -403,9 +424,11 @@ They're all based upon `ZEND_HASH_FOREACH` :
 		    } \
 		} while (0)
 
+You are provided many flavors of them, depending if you want to see the key in the iteration loop, if that key is a string or an integer; If you want to browse the table backwards, if you want it to probe for the pointer data into the zval... etc. `ZEND_HASH_FOREACH_KEY()`, `ZEND_HASH_FOREACH_STR_KEY_PTR()`, `ZEND_HASH_REVERSE_FOREACH_KEY_VAL()` ...
+
 ## Packed hashtable optimization
 
-So, remember the crucial design rule : we insert data elements in ascending order into `arData`, from 0 to end , then we grow the `arData` vector. This allows us to easilly and cheaply iterate over the hashtable : simply iterate over `arData` C-array.
+So, remember the crucial design rule : we insert data elements in ascending order into `arData`, from 0 to end , then we grow the `arData` vector. This allows us to easily and cheaply iterate over the hashtable : simply iterate over `arData` C-array.
 Because one would use a string or an unordered integer as the hashtable key, we must store a translation table to be able to probe the hash.
 
 But there is one case where such a translation table is useless : if the user only uses integer based keys, and only in ascending order.
@@ -416,7 +439,7 @@ This optimization is called *"packed hashtable"*. Here is a packed hashtable :
 ![packed_hash](../../../img/php7-hashtables/packed_hash.png)
 
 Like you can see, the keys are all integer based (no string key) and all in ascending order, even not contiguous.
-Iterating from `arData[0]` to end will then give elements in their right order. Hence, the translation table have been reduced to only two slots, weighting only 2 uint32 (8 bytes). All other translation slots are useless. That may seem strange, but those two slots are here for performances (rather than not having any slot at all).
+Iterating from `arData[0]` to end will then give elements in their right order. Hence, the translation table have been reduced to only two slots, weighting only 2 `uint32` (8 bytes). All other translation slots are useless. That may seem strange, but those two slots are here for performances (rather than not having any slot at all).
 
 Be warned however : if you break the rule, for example by now inserting an element with a string-based key (which will need to get hashed/reduced), then we have no other choice of turning this packed hashtable into a classical hashtable : we create the full translation slots and reorganize buckets. Like this :
 
@@ -431,7 +454,7 @@ Be warned however : if you break the rule, for example by now inserting an eleme
 		HT_SET_DATA_ADDR(ht, new_data);
 		memcpy(ht->arData, old_buckets, sizeof(Bucket) * ht->nNumUsed);
 		pefree(old_data, (ht)->u.flags & HASH_FLAG_PERSISTENT);
-		zend_hash_rehash(ht);
+		zend_hash_rehash(ht); /* Prepare the translation table and the translation slots */
 	}
 
 You can spot here that the hashtable `u.flags` is used to recognize if the hashtable is packed or not.
@@ -479,6 +502,29 @@ To create a packed hashtable, simply tell it to the API :
 Be warned that `zend_hash_real_init()` is the full initialization step, not the lazy one (`zend_hash_init()`).
 Usually, when you initialize (lazy) a hashtable and start inserting things into it, it will start itself as packed , and as soon as one condition breaks packed optimization, it will turn to classical hash.
 
+Last word : an API exists if you want to construct a full packed hashtable. Instead of using some `zend_hash_index_add()` or `zend_hash_add_next_index_insert()`, this API is fully macro based and as you can spot from its source code : it is very performant.
+
+	#define ZEND_HASH_FILL_PACKED(ht) do { \
+			HashTable *__fill_ht = (ht); \
+			Bucket *__fill_bkt = __fill_ht->arData + __fill_ht->nNumUsed; \
+			uint32_t __fill_idx = __fill_ht->nNumUsed; \
+			ZEND_ASSERT(__fill_ht->u.flags & HASH_FLAG_PACKED);
+
+	#define ZEND_HASH_FILL_ADD(_val) do { \
+			ZVAL_COPY_VALUE(&__fill_bkt->val, _val); \
+			__fill_bkt->h = (__fill_idx); \
+			__fill_bkt->key = NULL; \
+			__fill_bkt++; \
+			__fill_idx++; \
+		} while (0)
+
+	#define ZEND_HASH_FILL_END() \
+			__fill_ht->nNumUsed = __fill_idx; \
+			__fill_ht->nNumOfElements = __fill_idx; \
+			__fill_ht->nNextFreeElement = __fill_idx; \
+			__fill_ht->nInternalPointer = __fill_idx ? 0 : HT_INVALID_IDX; \
+		} while (0)
+	
 ## Arrays in PHP land
 
 You know PHP's arrays. Here, we'll see together how hashtable implementation details can be checked through userland code.
@@ -582,7 +628,7 @@ Here, memory usage is :
 See the difference ? Now the algorithm has not resized our table from 32768 to 65538 slots, but have run the compaction.
 Our hashtable is still 32767 slots allocated, and as a slot is a `Bucket`, into which a `zval`, into which size of a `long` (42 here) : the memory doesn't move a bit, as the zval already embeds the sizeof a long ;-) Hence, we may now **reuse** those 32768 slots with integer values, or booleans, or floats , for free. If we would use strings, objects, other arrays etc... as values, then extra memory allocation would be done, which pointer would be stored into the already preallocated UNDEF `zval`s of our "hot" array.
 
-We can try the same with **non-packed** hashtable, but classical one, simply using a string based key. Here, when we overflow by one element, the table will compact and not resize, because there is no such think as order to be kept : we are anyway in non-packed mode, just stick the additionnal value at the leftmost position (`idx` 0), all follows as UNDEF zvals.
+We can try the same with **non-packed** hashtable, but classical one, simply using a string based key. Here, when we overflow by one element, the table will compact and not resize, because there is no such thing as order to be kept : we are anyway in non-packed mode, just stick the additionnal value at the leftmost position (`idx` 0), all follows as UNDEF zvals.
 
 	function m()
 	{
@@ -658,7 +704,7 @@ For example, any PHP scripts may contain functions, and/or classes. Well, those 
 The compiler turns a PHP script into what's called an "OPArray", and it attaches this OPArray the function table (which could be empty), and the class table (which could also be empty).
 When PHP finished its current request, it must clean this OPArray : it destroys the function table, and the class table. But if OPCache is enabled, it would have turned those two arrays as *IMMUTABLE* as well, preventing the engine from destroying them. They will be loaded back from shared memory as soon as another request shows in, and asks for such a same script.
 
-OPCache not only stores those tables into memory once and only once, it also prevents them from being destroyed. Such a destruction process can take time, as it is recursive and involves destroying many pointers from memory (the more you have classes and functions, the more the destroy process will be long). Thus, immutable hashtables also allow OPCache to speed up the shutdown sequence of the engine, and the current PHP process will be recycled faster to treat another pending request : this accelerates the overall performances of PHP.
+OPCache not only stores those tables into memory once and only once, it also prevents them from being destroyed at the end of every request. Such a destruction process can take time, as it is recursive and involves destroying many pointers from memory (the more you have classes and functions, the more the destroy process will be long). Thus, immutable hashtables also allow OPCache to speed up the shutdown sequence of the engine, and the current PHP process will be recycled faster to treat another pending request : this accelerates the overall performances of PHP.
 
 Don't get confused by immutable arrays. For example, there is no optimization at this time for such a scenario :
 
