@@ -129,7 +129,7 @@ zend_object   *zobj;
 my_own_object *my_obj;
 
 zobj   = Z_OBJ_P(this_zval);
-my_obj = (my_own_object *)((char *)zobj - XoffsetOf(struct my_own_object, zobj));</code></pre>
+my_obj = (my_own_object *)((char *)zobj - XtoffsetOf(struct my_own_object, zobj));</code></pre>
 <p>Using <code>offsetof()</code> here has one implication : <strong>the zend_object must be the last member of your_custom_struct object</strong>. Obviously if you declare types after it, you'll run into trouble accessing them, because of the way <em>zend_object</em> is allocated now in PHP 7.</p>
 <p>Remember that now in PHP 7, <em>zend_object</em> has a struct hack. That means that the allocated memory quantity will differ from <code>sizeof(zend_object)</code>.
 To allocate a <em>zend_object</em>, one would use :</p>
@@ -203,28 +203,28 @@ Also, if you read carefully the articles I point you to or <a href="http://fr.sl
 <p>So to sum up things about destructors :</p>
 <ul><li>The destructor is called exactly zero <strong>or</strong> one time (most likely), but never more than once. In case of fatal errors, it <strong>won't</strong> be called at all.</li>
 <li>The destructor shouldn't free resources, as the object <strong>could</strong> be reused by the engine in some special rare cases.</li>
-<li>
-<p>If you don't call <code>zend_objects_destroy_object()</code> from your custom destructor, userland's <code>__destruct()</code> won't be triggered.</p>
-<p>/<em> PHP 7 </em>/
-static void my_destroy_object(zend_object <em>object)
+<li>If you don't call <code>zend_objects_destroy_object()</code> from your custom destructor, userland's <code>__destruct()</code> won't be triggered.</li>
+</ul><p>.</p>
+<pre><code>/* PHP 7 */
+static void my_destroy_object(zend_object *object)
 {
-my_own_object </em>my_obj;</p>
-<pre><code>my_obj = (my_own_object *)((char *)object - XoffsetOf(my_own_object, zobj));
+    my_own_object *my_obj;
 
-/* Now we could do something with my_obj->my_custom_buffer, like sending it
-   on a socket, or flush it to a file, or whatever, but not free it here */
+    my_obj = (my_own_object *)((char *)object - XtoffsetOf(my_own_object, zobj));
 
-zend_objects_destroy_object(object); /* call __destruct() from userland */</code></pre>
-<p>}</p>
-</li>
-</ul><h2 id="object-storage-free">Object storage free<a href="#object-storage-free" class="anchor">#</a></h2>
+    /* Now we could do something with my_obj->my_custom_buffer, like sending it
+       on a socket, or flush it to a file, or whatever, but not free it here */
+
+    zend_objects_destroy_object(object); /* call __destruct() from userland */
+}</code></pre>
+<h2 id="object-storage-free">Object storage free<a href="#object-storage-free" class="anchor">#</a></h2>
 <p>Finally, the free storage function is triggered when the engine is extra sure the object is not used elsewhere. The engine <strong>is</strong> about to destroy it, but just before doing so, it calls your <code>free_obj()</code> handler. You allocated some resources in your custom <code>create_object()</code> handler ? It is now time to free them :</p>
 <pre><code>/* PHP 7 */
 static void my_free_object(zend_object *object)
 {
     my_own_object *my_obj;
 
-    my_obj = (my_own_object *)((char *)object - XoffsetOf(my_own_object, zobj));
+    my_obj = (my_own_object *)((char *)object - XtoffsetOf(my_own_object, zobj));
 
     efree(my_obj->my_custom_buffer); /* Free your custom resources */
 

@@ -187,7 +187,7 @@ As you can see, the line numbers in the stack trace are not the same, they alway
 
 ## Exceptions into the Zend Virtual Machine Executor
 
-If you don't know how the Zend Virtual Machine Executor works, you should read [the related article](jpauli.github.io/2015/02/05/zend-vm-executor.html).
+If you don't know how the Zend Virtual Machine Executor works, you should read [the related article](http://jpauli.github.io/2015/02/05/zend-vm-executor.html).
 Now that you have a glance on how the executor works, well, Exceptions are not hard to understand.
 
 ### Throwing an Exception

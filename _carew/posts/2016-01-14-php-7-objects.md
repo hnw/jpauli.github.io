@@ -113,7 +113,7 @@ So now to fetch your custom object in PHP 7, you'd do it like this :
 	my_own_object *my_obj;
 	
 	zobj   = Z_OBJ_P(this_zval);
-	my_obj = (my_own_object *)((char *)zobj - XoffsetOf(struct my_own_object, zobj));
+	my_obj = (my_own_object *)((char *)zobj - XtoffsetOf(struct my_own_object, zobj));
 
 Using `offsetof()` here has one implication : **the zend_object must be the last member of your_custom_struct object**. Obviously if you declare types after it, you'll run into trouble accessing them, because of the way *zend_object* is allocated now in PHP 7.
 
@@ -208,12 +208,14 @@ So to sum up things about destructors :
 	* The destructor shouldn't free resources, as the object **could** be reused by the engine in some special rare cases.
 	* If you don't call `zend_objects_destroy_object()` from your custom destructor, userland's `__destruct()` won't be triggered.
 
+.
+
 	/* PHP 7 */
 	static void my_destroy_object(zend_object *object)
 	{
 		my_own_object *my_obj;
 
-		my_obj = (my_own_object *)((char *)object - XoffsetOf(my_own_object, zobj));
+		my_obj = (my_own_object *)((char *)object - XtoffsetOf(my_own_object, zobj));
 
 		/* Now we could do something with my_obj->my_custom_buffer, like sending it
 		   on a socket, or flush it to a file, or whatever, but not free it here */
@@ -230,7 +232,7 @@ Finally, the free storage function is triggered when the engine is extra sure th
 	{
 		my_own_object *my_obj;
 
-		my_obj = (my_own_object *)((char *)object - XoffsetOf(my_own_object, zobj));
+		my_obj = (my_own_object *)((char *)object - XtoffsetOf(my_own_object, zobj));
 
 		efree(my_obj->my_custom_buffer); /* Free your custom resources */
 
