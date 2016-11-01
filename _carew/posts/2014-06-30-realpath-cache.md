@@ -45,7 +45,7 @@ cached in this cache, but in the last file access cache.
 
 As usual, we find the solution by having a look at the source code.
 Whenever you access a file in PHP, [php_resolve_path()](http://lxr.php.net/xref/PHP_5_5/main/fopen_wrappers.c#473) is used.
-This function quickly calls [tsrm_reapath()](http://lxr.php.net/xref/PHP_5_5/TSRM/tsrm_virtual_cwd.c#1925) which itself
+This function quickly calls [tsrm_realpath()](http://lxr.php.net/xref/PHP_5_5/TSRM/tsrm_virtual_cwd.c#1925) which itself
 calls [virtual_file_ex()](http://lxr.php.net/xref/PHP_5_5/TSRM/tsrm_virtual_cwd.c#1151) and finally, [tsrm_realpath_r()](http://lxr.php.net/xref/PHP_5_5/TSRM/tsrm_virtual_cwd.c#750).
 
 That's where things get interested. Functions like [realpath_cache_find()](http://lxr.php.net/xref/PHP_5_5/TSRM/tsrm_virtual_cwd.c#830) are called, to lookup in a table if the stat informations have already been asked and cached for this
